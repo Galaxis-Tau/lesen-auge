@@ -1,1 +1,490 @@
 
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Eye-Tracking Lese-App</title>
+<script src="https://cdn.jsdelivr.net/npm/webgazer@3.3.0/dist/webgazer.min.js" type="text/javascript"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f4f6f8;
+    color: #1a1a1a;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .container { max-width: 1000px; margin: 0 auto; }
+  h1 { margin-bottom: 8px; font-size: 28px; }
+  .subtitle { color: #666; margin-bottom: 24px; }
+
+  .screen { display: none; }
+  .screen.active { display: block; }
+
+  /* Setup Screen */
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    margin-bottom: 16px;
+  }
+  textarea {
+    width: 100%;
+    min-height: 200px;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 16px;
+    font-family: Georgia, serif;
+    resize: vertical;
+  }
+  button {
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  button:hover { background: #1d4ed8; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  button.secondary { background: #6b7280; }
+  button.secondary:hover { background: #4b5563; }
+  button.danger { background: #dc2626; }
+  button.danger:hover { background: #b91c1c; }
+  .button-row { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+
+  /* Calibration */
+  #calibration-screen {
+    position: fixed;
+    inset: 0;
+    background: rgba(255,255,255,0.98);
+    z-index: 1000;
+    display: none;
+  }
+  #calibration-screen.active { display: block; }
+  .cal-info {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    max-width: 600px;
+    padding: 16px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  .cal-point {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    background: #dc2626;
+    border-radius: 50%;
+    border: 3px solid #fff;
+    box-shadow: 0 0 0 2px #dc2626;
+    cursor: pointer;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .cal-point:hover { transform: scale(1.2); }
+  .cal-point.done { background: #16a34a; box-shadow: 0 0 0 2px #16a34a; }
+
+  /* Reading Screen */
+  #reading-text {
+    font-family: Georgia, serif;
+    font-size: 20px;
+    line-height: 1.8;
+    padding: 32px;
+    background: #fff;
+    border-radius: 12px;
+    min-height: 300px;
+    white-space: pre-wrap;
+  }
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #fef3c7;
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #dc2626;
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 50% { opacity: 0.4; } }
+
+  /* Results */
+  #heatmap-container {
+    position: relative;
+    background: #fff;
+    border-radius: 12px;
+    padding: 32px;
+    margin-bottom: 16px;
+  }
+  #heatmap-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    border-radius: 12px;
+  }
+  pre {
+    background: #1e293b;
+    color: #e2e8f0;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    max-height: 300px;
+    font-size: 12px;
+  }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .stat {
+    background: #fff;
+    padding: 16px;
+    border-radius: 8px;
+    text-align: center;
+  }
+  .stat-value { font-size: 24px; font-weight: 700; color: #2563eb; }
+  .stat-label { font-size: 12px; color: #666; margin-top: 4px; }
+
+  /* Webcam Feedback: WebGazer-Overlays in die Ecke */
+  #webgazerVideoContainer {
+    top: auto !important;
+    bottom: 10px !important;
+    left: 10px !important;
+    border-radius: 8px !important;
+    overflow: hidden !important;
+  }
+  #webgazerVideoFeed { border-radius: 8px !important; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- SETUP SCREEN -->
+  <div id="setup-screen" class="screen active">
+    <h1>👁️ Eye-Tracking Lese-App</h1>
+    <p class="subtitle">Lies einen Text und sieh, wohin dein Blick wandert</p>
+
+    <div class="card">
+      <h3 style="margin-bottom: 12px;">1. Text einfügen</h3>
+      <textarea id="text-input" placeholder="Füge hier deinen Lesetext ein...">Die Sonne ging langsam hinter den Bergen unter und tauchte das Tal in ein warmes, goldenes Licht. Anna stand am Fenster und beobachtete, wie die Schatten länger wurden. Sie dachte an die vielen Jahre, die sie in diesem Haus verbracht hatte, an all die Geschichten, die diese Wände erzählen könnten. Ein leiser Wind strich durch die Bäume im Garten und ließ die Blätter rascheln. Es war ein friedlicher Abend, einer von jenen, die man nie vergisst.</textarea>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom: 12px;">2. Webcam-Zugriff</h3>
+      <p style="color: #666; margin-bottom: 16px;">
+        Die App benötigt Zugriff auf deine Webcam. Die Videodaten werden <strong>ausschließlich lokal im Browser</strong> verarbeitet und nicht übertragen.
+      </p>
+      <button id="btn-start-setup">Webcam aktivieren & Kalibrierung starten</button>
+    </div>
+  </div>
+
+  <!-- CALIBRATION SCREEN -->
+  <div id="calibration-screen">
+    <div class="cal-info">
+      <h2>Kalibrierung</h2>
+      <p style="margin: 8px 0;">Klicke <strong>je 5 Mal</strong> auf jeden roten Punkt und <strong>schaue dabei direkt darauf</strong>.</p>
+      <p style="font-size: 14px; color: #666;">Fortschritt: <span id="cal-progress">0</span> / 45 Klicks</p>
+    </div>
+    <!-- 9 Kalibrierungspunkte werden per JS erstellt -->
+  </div>
+
+  <!-- READING SCREEN -->
+  <div id="reading-screen" class="screen">
+    <div class="status-bar">
+      <div class="dot"></div>
+      <span><strong>Tracking läuft</strong> – lies den Text in deinem eigenen Tempo</span>
+      <span id="timer" style="margin-left: auto; font-family: monospace;">00:00</span>
+    </div>
+    <div id="reading-text"></div>
+    <div class="button-row">
+      <button id="btn-stop" class="danger">⏹ Stopp & Auswertung</button>
+    </div>
+  </div>
+
+  <!-- RESULTS SCREEN -->
+  <div id="results-screen" class="screen">
+    <h1>Auswertung</h1>
+
+    <div class="stats">
+      <div class="stat"><div class="stat-value" id="stat-points">0</div><div class="stat-label">Blickpunkte</div></div>
+      <div class="stat"><div class="stat-value" id="stat-duration">0s</div><div class="stat-label">Dauer</div></div>
+      <div class="stat"><div class="stat-value" id="stat-rate">0</div><div class="stat-label">Punkte/Sek.</div></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom: 12px;">🔥 Heatmap über dem Text</h3>
+      <div id="heatmap-container">
+        <div id="heatmap-text"></div>
+        <canvas id="heatmap-canvas"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom: 12px;">📄 Rohdaten (JSON)</h3>
+      <pre id="json-output"></pre>
+      <div class="button-row">
+        <button id="btn-download">⬇ JSON herunterladen</button>
+        <button id="btn-restart" class="secondary">🔄 Neu starten</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ====== Zustand ======
+  let gazeData = [];
+  let sessionStart = null;
+  let timerInterval = null;
+  let calibrationClicks = 0;
+  const CAL_TARGET = 45; // 9 Punkte × 5 Klicks
+
+  // ====== Screen-Management ======
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  // ====== Setup: Webcam + Kalibrierung ======
+  document.getElementById('btn-start-setup').addEventListener('click', async () => {
+    const text = document.getElementById('text-input').value.trim();
+    if (!text) { alert('Bitte gib einen Text ein.'); return; }
+
+    const btn = document.getElementById('btn-start-setup');
+    btn.disabled = true;
+    btn.textContent = 'Webcam wird gestartet...';
+
+    try {
+      // Globaler Fehlerhandler für asynchrone WebGazer-Fehler
+      // (WebGazer wirft manchmal interne Promise-Rejections, die das Tracking selbst nicht verhindern)
+      window.addEventListener('unhandledrejection', (e) => {
+        console.warn('WebGazer async warning (ignoriert):', e.reason);
+        e.preventDefault();
+      });
+
+      // WebGazer starten
+      webgazer.params.showVideoPreview = true;
+      webgazer.params.showFaceOverlay = true;
+      webgazer.params.showFaceFeedbackBox = true;
+
+      await webgazer.begin().catch(err => {
+        console.warn('begin() Warnung (ignoriert):', err);
+      });
+
+      // Warten bis WebGazer wirklich bereit ist (max 5 Sekunden)
+      btn.textContent = 'Warte auf Tracking...';
+      let ready = false;
+      for (let i = 0; i < 50; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        try {
+          const pred = await webgazer.getCurrentPrediction();
+          if (pred) { ready = true; break; }
+        } catch (e) { /* weiter warten */ }
+      }
+
+      // Auch wenn kein "ready" Signal kam: Wenn Video läuft, weitermachen
+      const videoEl = document.getElementById('webgazerVideoFeed');
+      if (!ready && !videoEl) {
+        throw new Error('Webcam konnte nicht initialisiert werden.');
+      }
+
+      webgazer.showPredictionPoints(true);
+      startCalibration();
+    } catch (e) {
+      console.error('WebGazer-Fehler:', e);
+      alert('Webcam konnte nicht gestartet werden: ' + (e.message || e));
+      btn.disabled = false;
+      btn.textContent = 'Webcam aktivieren & Kalibrierung starten';
+    }
+  });
+
+  // ====== Kalibrierung ======
+  function startCalibration() {
+    const calScreen = document.getElementById('calibration-screen');
+    calScreen.classList.add('active');
+    document.getElementById('setup-screen').classList.remove('active');
+
+    // 9 Punkte in 3x3 Raster
+    const positions = [
+      {top: '10%', left: '10%'}, {top: '10%', left: '50%'}, {top: '10%', left: '90%'},
+      {top: '50%', left: '10%'}, {top: '50%', left: '50%'}, {top: '50%', left: '90%'},
+      {top: '90%', left: '10%'}, {top: '90%', left: '50%'}, {top: '90%', left: '90%'}
+    ];
+
+    positions.forEach((pos, i) => {
+      const dot = document.createElement('div');
+      dot.className = 'cal-point';
+      dot.style.top = pos.top;
+      dot.style.left = pos.left;
+      dot.style.transform = 'translate(-50%, -50%)';
+      dot.dataset.clicks = '0';
+      dot.addEventListener('click', () => handleCalClick(dot));
+      calScreen.appendChild(dot);
+    });
+  }
+
+  function handleCalClick(dot) {
+    const clicks = parseInt(dot.dataset.clicks) + 1;
+    dot.dataset.clicks = clicks;
+    if (clicks >= 5) dot.classList.add('done');
+
+    calibrationClicks++;
+    document.getElementById('cal-progress').textContent = calibrationClicks;
+
+    if (calibrationClicks >= CAL_TARGET) {
+      setTimeout(startReading, 500);
+    }
+  }
+
+  // ====== Lesen & Tracking ======
+  function startReading() {
+    // Kalibrierungs-Screen schließen
+    const calScreen = document.getElementById('calibration-screen');
+    calScreen.classList.remove('active');
+    calScreen.querySelectorAll('.cal-point').forEach(el => el.remove());
+
+    // Text einsetzen
+    const text = document.getElementById('text-input').value;
+    document.getElementById('reading-text').textContent = text;
+
+    // WebGazer: Alle Overlays ausblenden während Lesen
+    webgazer.showPredictionPoints(false);
+    webgazer.showVideoPreview(false);
+    webgazer.showFaceOverlay(false);
+    webgazer.showFaceFeedbackBox(false);
+
+    // Gaze-Listener
+    gazeData = [];
+    sessionStart = Date.now();
+    webgazer.setGazeListener((data, elapsedTime) => {
+      if (data == null) return;
+      gazeData.push({
+        x: Math.round(data.x),
+        y: Math.round(data.y),
+        t: Math.round(elapsedTime)
+      });
+    });
+
+    // Timer
+    timerInterval = setInterval(() => {
+      const s = Math.floor((Date.now() - sessionStart) / 1000);
+      const mm = String(Math.floor(s/60)).padStart(2, '0');
+      const ss = String(s%60).padStart(2, '0');
+      document.getElementById('timer').textContent = `${mm}:${ss}`;
+    }, 1000);
+
+    showScreen('reading-screen');
+  }
+
+  // ====== Stopp ======
+  document.getElementById('btn-stop').addEventListener('click', () => {
+    clearInterval(timerInterval);
+    webgazer.clearGazeListener();
+    showResults();
+  });
+
+  // ====== Ergebnis + Heatmap ======
+  function showResults() {
+    const duration = Math.round((Date.now() - sessionStart) / 1000);
+    document.getElementById('stat-points').textContent = gazeData.length;
+    document.getElementById('stat-duration').textContent = duration + 's';
+    document.getElementById('stat-rate').textContent = duration > 0 ? (gazeData.length / duration).toFixed(1) : '0';
+
+    // Text in Heatmap-Container rendern
+    const text = document.getElementById('text-input').value;
+    const heatmapText = document.getElementById('heatmap-text');
+    heatmapText.textContent = text;
+    heatmapText.style.fontFamily = 'Georgia, serif';
+    heatmapText.style.fontSize = '20px';
+    heatmapText.style.lineHeight = '1.8';
+    heatmapText.style.whiteSpace = 'pre-wrap';
+
+    // JSON anzeigen (gekürzt)
+    const preview = gazeData.slice(0, 50);
+    document.getElementById('json-output').textContent =
+      JSON.stringify(preview, null, 2) +
+      (gazeData.length > 50 ? `\n\n... (${gazeData.length - 50} weitere Punkte)` : '');
+
+    showScreen('results-screen');
+
+    // Heatmap zeichnen (nach Render)
+    setTimeout(drawHeatmap, 100);
+  }
+
+  function drawHeatmap() {
+    const container = document.getElementById('heatmap-container');
+    const canvas = document.getElementById('heatmap-canvas');
+    const rect = container.getBoundingClientRect();
+
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Container-Offset zur Seite
+    const offsetX = rect.left;
+    const offsetY = rect.top + window.scrollY;
+
+    // Heatmap: radiale Gradienten
+    gazeData.forEach(p => {
+      // Gaze-Koordinaten sind relativ zum Viewport beim Tracken,
+      // aber die Punkte wurden während Lesen erfasst - wir nehmen sie relativ zum Container an.
+      // Da Scroll während Lesen = 0, ist x/y = viewport-Koord.
+      const x = p.x - offsetX;
+      const y = p.y - offsetY + window.scrollY; // y war viewport-relativ
+
+      if (x < 0 || x > canvas.width || y < 0 || y > canvas.height) return;
+
+      const gradient = ctx.createRadialGradient(x, y, 0, x, y, 30);
+      gradient.addColorStop(0, 'rgba(255, 0, 0, 0.15)');
+      gradient.addColorStop(1, 'rgba(255, 0, 0, 0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(x - 30, y - 30, 60, 60);
+    });
+  }
+
+  // ====== Download ======
+  document.getElementById('btn-download').addEventListener('click', () => {
+    const payload = {
+      text: document.getElementById('text-input').value,
+      duration_s: Math.round((Date.now() - sessionStart) / 1000),
+      points: gazeData.length,
+      gaze_data: gazeData
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `gaze_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // ====== Restart ======
+  document.getElementById('btn-restart').addEventListener('click', () => {
+    if (webgazer) webgazer.end();
+    location.reload();
+  });
+</script>
+</body>
+</html>
